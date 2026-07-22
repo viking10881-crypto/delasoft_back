@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\juaz2\\\\Documents\\\\GitHub\\\\delasoft_back\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName)",
+      "Bash(node --check server.js)",
+      "Bash(npm install *)",
+      "Bash(npm uninstall *)",
+      "Bash(node -e \"require\\('./services/push.service'\\)\")",
+      "Bash(node --check services/push.service.js)",
+      "Bash(node --check services/notificationScheduler.js)",
+      "Bash(node --check config/socket.js)",
+      "Bash(node --check controllers/sales.controller.js)",
+      "Bash(node --check app.js)",
+      "Bash(node --check routes/public-api.routes.js)",
+      "Bash(node --check routes/sales.routes.js)",
+      "Bash(node --check controllers/reviews.controller.js)",
+      "Bash(node --check \"C:\\\\Users\\\\juaz2\\\\Documents\\\\GitHub\\\\delasoft_back\\\\controllers\\\\reviews.controller.js\")",
+      "PowerShell(Get-ChildItem -Path . -Recurse -Depth 2 -Name | Where-Object { $_ -match '\\\\.\\(js|ts|json\\)$' } | Select-Object -First 80)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"require\\('./controllers/sales.controller'\\); console.log\\('OK'\\);\")",
+      "Bash(node -e \"require\\('./routes/inventory.routes'\\); console.log\\('OK'\\);\")",
+      "Bash(dir \"c:\\\\Users\\\\juaz2\\\\Documents\\\\GitHub\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\juaz2\\Documents\\GitHub\\delasoft_back\\services",
+      "c:\\Users\\juaz2\\Documents\\GitHub\\delasoft_front\\src\\hooks",
+      "c:\\Users\\juaz2\\Documents\\GitHub\\delasoft_front\\src\\components",
+      "c:\\Users\\juaz2\\Documents\\GitHub\\delasoft_front\\src\\context",
+      "c:\\Users\\juaz2\\Documents\\GitHub\\delasoft_front\\src"
+    ]
+  }
+}
