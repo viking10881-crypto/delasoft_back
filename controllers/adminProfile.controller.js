@@ -102,10 +102,20 @@ const upsertAdminProfile = async (req, res) => {
     }
 
     // Placeholders: $2..$N for the field columns
-    const colPlaceholders = fieldNames.map((_, i) => {
+    const colPlaceholders = fieldNames.map((field, i) => {
       const p = `$${i + 2}`;
       // social_links is NOT NULL — wrap in COALESCE so new rows satisfy the constraint
-      return fieldNames[i] === 'social_links' ? `COALESCE(${p}::jsonb, '{}')` : p;
+      if (field === 'social_links') return `COALESCE(${p}::jsonb, '{}')`;
+
+      // These columns are NOT NULL. Passing an explicit NULL bypasses the
+      // database DEFAULT, so use the same defaults when creating a profile.
+      if (field === 'default_fulfillment_mode') {
+        return `COALESCE(${p}::fulfillment_mode_type, 'stock'::fulfillment_mode_type)`;
+      }
+      if (field === 'partial_shipment_allowed') return `COALESCE(${p}, false)`;
+      if (field === 'auto_create_procurement_orders') return `COALESCE(${p}, true)`;
+
+      return p;
     });
 
     // DO UPDATE: COALESCE(EXCLUDED.col, existing) so absent fields don't overwrite.
