@@ -33,6 +33,7 @@ router.get('/products', requireAdmin, async (req, res) => {
     const { rows } = await db.query(
       `SELECT
          v.*,
+         p.is_published,
          CASE WHEN v.variant_id IS NOT NULL THEN (
            SELECT string_agg(
              COALESCE(av.display_value, av.value),
@@ -45,6 +46,7 @@ router.get('/products', requireAdmin, async (req, res) => {
            WHERE vav.variant_id = v.variant_id
          ) ELSE NULL END AS variant_label
        FROM v_stock_disponible v
+       JOIN products p ON p.id = v.product_id
        WHERE v.owner_admin_id = $1
        ORDER BY v.name ASC, v.variant_id ASC NULLS FIRST`,
       [ownerId],

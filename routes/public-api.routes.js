@@ -75,7 +75,7 @@ router.get("/products", requireApiPermission("products:read"), async (req, res) 
     const offset    = (Math.max(parseInt(page) || 1, 1) - 1) * safeLimit;
 
     const params = [adminId];
-    let where = "WHERE p.is_active = true AND p.owner_admin_id = $1";
+    let where = "WHERE p.is_active = true AND p.is_published = true AND p.owner_admin_id = $1";
 
     if (category) {
       const { rows: catRows } = await db.query(
@@ -313,6 +313,7 @@ router.get("/products/:id", requireApiPermission("products:read"), async (req, r
          AND (d.scope = 'web' OR d.scope = 'all')
        WHERE p.id = $1
          AND p.is_active = true
+         AND p.is_published = true
          AND p.owner_admin_id = $2
        LIMIT 1`,
       [req.params.id, adminId]
@@ -615,7 +616,7 @@ router.post("/sales", requireApiPermission("sales:write"), auth, async (req, res
       const productRes = await client.query(
         `SELECT id, name, sale_price, stock, stock_reserved, stock_safety, purchase_price, has_variants, fulfillment_mode
          FROM products
-         WHERE id = $1 AND is_active = true AND owner_admin_id = $2`,
+         WHERE id = $1 AND is_active = true AND is_published = true AND owner_admin_id = $2`,
         [item.product_id, adminId]
       );
 
@@ -911,8 +912,12 @@ router.get("/inventory/availability", requireApiPermission("products:read"), asy
     const params = variantId ? [productId, variantId, adminId] : [productId, adminId];
 
     const { rows } = await db.query(
-      `SELECT disponible, min_stock, stock_safety, fulfillment_mode
-       FROM v_stock_disponible WHERE ${conditions.join(" AND ")} LIMIT 1`,
+      `SELECT v.disponible, v.min_stock, v.stock_safety, v.fulfillment_mode
+       FROM v_stock_disponible v
+       JOIN products p ON p.id = v.product_id
+       WHERE ${conditions.map(c => `v.${c}`).join(" AND ")}
+         AND p.is_active = true AND p.is_published = true
+       LIMIT 1`,
       params
     );
     const row = rows[0] ?? null;
