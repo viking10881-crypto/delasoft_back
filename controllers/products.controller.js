@@ -82,10 +82,22 @@ exports.getAll = async (req, res) => {
   try {
     const { isSuperAdmin, adminId } = req;
 
-    const { categoria, search, min_price, max_price } = req.query;
+    const { categoria, search, min_price, max_price, status = "active" } = req.query;
     const page   = Math.max(1, parseInt(req.query.page)  || 1);
     const limit  = Math.min(100, parseInt(req.query.limit) || 12);
     const offset = (page - 1) * limit;
+
+    const allowedStatuses = new Set(["active", "all", "published", "hidden", "inactive"]);
+    if (!allowedStatuses.has(status))
+      return res.status(400).json({ success: false, message: "Estado de producto inválido" });
+
+    const statusClause = {
+      active:    "p.is_active = true",
+      all:       "true",
+      published: "p.is_active = true AND p.is_published = true",
+      hidden:    "p.is_active = true AND p.is_published = false",
+      inactive:  "p.is_active = false",
+    }[status];
 
     const queryParams = [];
     let pi = 1;
@@ -180,7 +192,7 @@ exports.getAll = async (req, res) => {
         JOIN product_variants pv ON pv.id = vsd.variant_id AND pv.is_active = true
         WHERE vsd.product_id = p.id AND vsd.variant_id IS NOT NULL
       ) vsd_variants ON true
-      WHERE p.is_active = true
+      WHERE ${statusClause}
         ${tenantClause}
         ${filtersClause}
       ORDER BY p.created_at DESC
@@ -208,7 +220,7 @@ exports.getAll = async (req, res) => {
       db.query(
         `SELECT COUNT(*) FROM products p
          LEFT JOIN categories c ON p.category_id = c.id
-         WHERE p.is_active = true ${countTenant} ${countFilters}`,
+         WHERE ${statusClause} ${countTenant} ${countFilters}`,
         countParams
       ),
     ]);
@@ -661,6 +673,100 @@ exports.update = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
+// PATCH /products/:id/publication
+// Oculta/publica sin alterar inventario, variantes ni historial.
+// ─────────────────────────────────────────────
+exports.setPublication = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_published } = req.body;
+    if (!id || isNaN(id))
+      return res.status(400).json({ success: false, message: "ID inválido" });
+    if (typeof is_published !== "boolean")
+      return res.status(400).json({ success: false, message: "is_published debe ser booleano" });
+
+    const params = [id, is_published];
+    let ownerClause = "";
+    if (!req.isSuperAdmin) {
+      params.push(req.adminId);
+      ownerClause = "AND owner_admin_id = $3";
+    }
+
+    const result = await db.query(
+      `UPDATE products
+       SET is_published = $2, updated_at = NOW()
+       WHERE id = $1 AND is_active = true ${ownerClause}
+       RETURNING *`,
+      params
+    );
+    if (!result.rowCount)
+      return res.status(404).json({ success: false, message: "Producto activo no encontrado" });
+
+    const product = await fetchFullProduct(Number(id));
+    emitDataUpdate("products", "updated", { id: Number(id), product }, req.adminId);
+    res.json({
+      success: true,
+      message: is_published ? "Producto publicado en la tienda" : "Producto ocultado de la tienda",
+      data: product,
+    });
+  } catch (error) {
+    console.error("[SET PRODUCT PUBLICATION ERROR]", error.message, error.stack);
+    res.status(500).json({ success: false, message: "Error al cambiar la visibilidad del producto" });
+  }
+};
+
+// ─────────────────────────────────────────────
+// PATCH /products/:id/lifecycle  { action: deactivate | reactivate }
+// Reactivar siempre vuelve como oculto para evitar una publicación accidental.
+// ─────────────────────────────────────────────
+exports.setLifecycle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action } = req.body;
+    if (!id || isNaN(id))
+      return res.status(400).json({ success: false, message: "ID inválido" });
+    if (!new Set(["deactivate", "reactivate"]).has(action))
+      return res.status(400).json({ success: false, message: "Acción inválida" });
+
+    const params = [id];
+    let ownerClause = "";
+    if (!req.isSuperAdmin) {
+      params.push(req.adminId);
+      ownerClause = "AND owner_admin_id = $2";
+    }
+
+    const nextActive = action === "reactivate";
+    params.push(nextActive);
+    const activeParam = params.length;
+
+    const result = await db.query(
+      `UPDATE products
+       SET is_active = $${activeParam},
+           is_published = false,
+           updated_at = NOW()
+       WHERE id = $1 ${ownerClause}
+       RETURNING *`,
+      params
+    );
+    if (!result.rowCount)
+      return res.status(404).json({ success: false, message: "Producto no encontrado" });
+
+    const product = await fetchFullProduct(Number(id));
+    emitDataUpdate("products", "updated", { id: Number(id), product }, req.adminId);
+    res.json({
+      success: true,
+      message: action === "reactivate"
+        ? "Producto reactivado como oculto; publícalo cuando esté listo"
+        : "Producto desactivado y retirado de la tienda",
+      data: product,
+    });
+  } catch (error) {
+    console.error("[SET PRODUCT LIFECYCLE ERROR]", error.message, error.stack);
+    res.status(500).json({ success: false, message: "Error al cambiar el estado del producto" });
+  }
+};
+
+// ─────────────────────────────────────────────
 // DELETE /products/:id
 //   Estrategia:
 //   1. Verifica ownership.
@@ -719,12 +825,13 @@ exports.remove = async (req, res) => {
     // 3) Si hay blockers o se pidió soft → soft delete
     if (hasBlockers || forceSoft) {
       await client.query(
-        "UPDATE products SET is_active = false, updated_at = NOW() WHERE id = $1",
+        "UPDATE products SET is_active = false, is_published = false, updated_at = NOW() WHERE id = $1",
         [id]
       );
       await client.query("COMMIT");
 
-      emitDataUpdate("products", "deleted", { id: parseInt(id) }, req.adminId);
+      const product = await fetchFullProduct(Number(id));
+      emitDataUpdate("products", "updated", { id: Number(id), product }, req.adminId);
 
       return res.json({
         success: true,
@@ -733,6 +840,7 @@ exports.remove = async (req, res) => {
           : "Producto desactivado correctamente",
         soft_deleted: true,
         blockers: hasBlockers ? b : null,
+        data: product,
       });
     }
 

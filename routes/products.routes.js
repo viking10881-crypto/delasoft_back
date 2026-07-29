@@ -34,6 +34,18 @@ router.put(
   ctrl.update
 );
 
+router.patch(
+  "/:id/publication",
+  requireRole(["admin", "gerente"]),
+  ctrl.setPublication
+);
+
+router.patch(
+  "/:id/lifecycle",
+  requireRole(["admin", "gerente"]),
+  ctrl.setLifecycle
+);
+
 router.delete(
   "/:id",
   requireRole(["admin", "gerente"]),
