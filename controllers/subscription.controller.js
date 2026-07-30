@@ -17,7 +17,7 @@ exports.getPublicPlans = async (req, res) => {
               has_analytics, has_ai_agent, has_api_access, has_multi_admin,
               has_custom_branding, has_wompi_payments, has_export,
               has_priority_support, has_push_notifications,
-              has_financial_reports, has_purchase_orders, has_discount_system,
+              has_financial_reports, has_purchase_orders, has_discount_system, has_inventory,
               color, badge_label, sort_order
        FROM subscription_plans
        WHERE is_active = true AND is_public = true
@@ -408,7 +408,7 @@ exports.updatePlan = async (req, res) => {
       "has_analytics", "has_ai_agent", "has_api_access", "has_multi_admin",
       "has_custom_branding", "has_wompi_payments", "has_export", "has_priority_support",
       "has_push_notifications", "has_financial_reports", "has_purchase_orders",
-      "has_discount_system", "color", "badge_label", "sort_order", "is_active", "is_public",
+      "has_discount_system", "has_inventory", "color", "badge_label", "sort_order", "is_active", "is_public",
     ];
 
     const entries = Object.entries(fields).filter(([k]) => allowed.includes(k));
