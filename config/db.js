@@ -7,7 +7,7 @@ const pool = new Pool({
   ssl:                     { rejectUnauthorized: isProduction },
   max:                     parseInt(process.env.DB_POOL_MAX) || 10,
   idleTimeoutMillis:       30_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 10_000,
   allowExitOnIdle:         true,
 });
 

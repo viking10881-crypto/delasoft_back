@@ -25,8 +25,12 @@ app.use(compression());
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 // CORS — solo origenes explícitamente permitidos
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5174,http://localhost:3000")
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",").map((o) => o.trim()).filter(Boolean);
+const developmentOrigins = isProd
+  ? []
+  : ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"];
+const allowedOrigins = new Set([...configuredOrigins, ...developmentOrigins]);
 
 const CORS_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
@@ -43,7 +47,7 @@ app.use((req, res, next) => {
   }
   return cors({
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      if (!origin || allowedOrigins.has(origin)) return cb(null, true);
       cb(Object.assign(new Error("Origin no permitido"), { status: 403 }));
     },
     credentials:    true,
@@ -127,6 +131,7 @@ const wompiRoutes              = safeRequire("./routes/wompi.routes",           
 const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes",  "paymentAccounts.routes");
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
+const leadsRoutes         = safeRequire("./routes/leads.routes",            "leads.routes");
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
 const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
@@ -162,6 +167,9 @@ startNotificationWorker();
 
 // — Auth —
 if (authRoutes)          app.use("/api/auth",          authRoutes);
+
+// — Captación comercial pública (landing) —
+if (leadsRoutes)         app.use("/api/public/leads",  leadsRoutes);
 
 // — Panel de administración —
 if (superadminRoutes)    app.use("/api/superadmin",     superadminRoutes);
@@ -230,6 +238,7 @@ app.get("/api/health", (req, res) => {
       paymentAccounts: !!paymentAccountsRoutes,
       analytics:      !!analyticsRoutes,
       contact:       !!contactRoutes,
+      leads:         !!leadsRoutes,
       publicApi:     !!publicApiRoutes,
     },
     services: {

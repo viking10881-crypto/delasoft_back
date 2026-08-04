@@ -2,6 +2,7 @@
 const express        = require("express");
 const router         = express.Router();
 const superadminCtrl = require("../controllers/superadmin.controller");
+const leadsCtrl      = require("../controllers/leads.controller");
 const { auth, requireSuperAdmin } = require("../middleware/auth.middleware");
 
 // Toda ruta requiere JWT válido + rol superadmin
@@ -9,6 +10,10 @@ router.use(auth, requireSuperAdmin);
 
 // ── Dashboard ────────────────────────────────────────────────────
 router.get("/stats", superadminCtrl.getSystemStats);
+
+// ── Prospectos captados desde la landing ────────────────────────
+router.get  ("/leads",     leadsCtrl.list);
+router.patch("/leads/:id", leadsCtrl.update);
 
 // ── CRUD admins ──────────────────────────────────────────────────
 router.get   ("/admins",              superadminCtrl.getAdmins);
