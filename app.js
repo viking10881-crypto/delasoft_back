@@ -63,6 +63,12 @@ app.post("/api/wompi/webhook",
   (req, res) => require("./controllers/wompi.controller").handleWebhook(req, res)
 );
 
+// Cobros de los planes DELASOFT. Es independiente del Wompi de cada tienda.
+app.post("/api/public/subscription-checkouts/wompi/webhook",
+  express.json({ limit: "1mb" }),
+  (req, res) => require("./controllers/subscriptionCheckout.controller").webhook(req, res)
+);
+
 app.use(express.json({
   limit: process.env.REQUEST_LIMIT || "10mb",
   verify: (req, _res, buf) => {
@@ -132,6 +138,7 @@ const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes", 
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const leadsRoutes         = safeRequire("./routes/leads.routes",            "leads.routes");
+const subscriptionCheckoutRoutes = safeRequire("./routes/subscriptionCheckout.routes", "subscriptionCheckout.routes");
 const inventoryRoutes     = safeRequire("./routes/inventory.routes",        "inventory.routes");
 const procurementRoutes   = safeRequire("./routes/procurement.routes",      "procurement.routes");
 const financePinRoutes = safeRequire("./routes/financePin.routes", "financePin.routes");
@@ -170,6 +177,7 @@ if (authRoutes)          app.use("/api/auth",          authRoutes);
 
 // — Captación comercial pública (landing) —
 if (leadsRoutes)         app.use("/api/public/leads",  leadsRoutes);
+if (subscriptionCheckoutRoutes) app.use("/api/public/subscription-checkouts", subscriptionCheckoutRoutes);
 
 // — Panel de administración —
 if (superadminRoutes)    app.use("/api/superadmin",     superadminRoutes);
