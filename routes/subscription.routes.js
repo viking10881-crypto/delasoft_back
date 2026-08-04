@@ -2,6 +2,7 @@
 const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../controllers/subscription.controller");
+const checkoutCtrl = require("../controllers/subscriptionCheckout.controller");
 const {
   auth,
   requireAdmin,
@@ -30,5 +31,7 @@ router.get  ("/admin/stats",      auth, requireSuperAdmin, ctrl.getSubscriptionS
 router.post ("/admin/coupons",    auth, requireSuperAdmin, ctrl.createCoupon);
 router.get  ("/admin/coupons",    auth, requireSuperAdmin, ctrl.getCoupons);
 router.patch("/admin/plans/:id",  auth, requireSuperAdmin, ctrl.updatePlan);
+router.get  ("/admin/checkouts", auth, requireSuperAdmin, checkoutCtrl.listAdmin);
+router.post ("/admin/checkouts/:id/activate", auth, requireSuperAdmin, checkoutCtrl.activate);
 
 module.exports = router;

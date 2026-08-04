@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const db = require('../config/db');
+const subscriptionService = require('../services/subscription.service');
 const { isValidEmail, normalizeEmail } = require('../utils/validation');
 
 const cleanText = (value, maxLength) => {
@@ -107,6 +108,131 @@ exports.create = async (req, res) => {
   } catch (error) {
     console.error(`[subscriptionCheckout] [${req.id || '-'}] create:`, error.message);
     return res.status(500).json({ success: false, message: 'No pudimos iniciar el pago. Intenta nuevamente.' });
+  }
+};
+
+// GET público: devuelve únicamente información no sensible de una referencia de alta entropía.
+exports.getStatus = async (req, res) => {
+  try {
+    const reference = cleanText(req.params?.reference, 100);
+    if (!reference || !/^DS-[A-Za-z0-9-]+$/.test(reference)) {
+      return res.status(400).json({ success: false, message: 'Referencia inválida.' });
+    }
+    const { rows } = await db.query(
+      `SELECT reference, plan_slug, plan_name, billing_cycle, currency, amount_cents,
+              status, wompi_status, paid_at, activated_at, expires_at, created_at
+         FROM subscription_checkout_orders
+        WHERE reference = $1
+        LIMIT 1`,
+      [reference]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: 'No encontramos esta orden.' });
+    return res.json({ success: true, order: rows[0] });
+  } catch (error) {
+    console.error(`[subscriptionCheckout] [${req.id || '-'}] getStatus:`, error.message);
+    return res.status(500).json({ success: false, message: 'No pudimos consultar el pago.' });
+  }
+};
+
+exports.listAdmin = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const offset = (page - 1) * limit;
+    const status = cleanText(req.query.status, 20);
+    const search = cleanText(req.query.search, 120);
+    const allowed = new Set(['pending', 'approved', 'declined', 'voided', 'error', 'expired', 'activated']);
+    const conditions = [];
+    const values = [];
+    if (status && status !== 'all') {
+      if (!allowed.has(status)) return res.status(400).json({ success: false, message: 'Estado inválido.' });
+      if (status === 'activated') conditions.push('sco.activated_at IS NOT NULL');
+      else { values.push(status); conditions.push(`sco.status = $${values.length}`); }
+    }
+    if (search) {
+      values.push(`%${search}%`);
+      conditions.push(`(sco.reference ILIKE $${values.length} OR sco.buyer_name ILIKE $${values.length} OR sco.business_name ILIKE $${values.length} OR sco.email ILIKE $${values.length})`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const listValues = [...values, limit, offset];
+    const [items, total, counts] = await Promise.all([
+      db.query(
+        `SELECT sco.*, u.name AS activated_admin_name, u.email AS activated_admin_email
+           FROM subscription_checkout_orders sco
+           LEFT JOIN users u ON u.id = sco.activated_admin_id
+           ${where}
+          ORDER BY sco.created_at DESC
+          LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+        listValues
+      ),
+      db.query(`SELECT COUNT(*)::int AS total FROM subscription_checkout_orders sco ${where}`, values),
+      db.query(`SELECT COUNT(*)::int AS total,
+                       COUNT(*) FILTER (WHERE status='pending')::int AS pending,
+                       COUNT(*) FILTER (WHERE status='approved')::int AS approved,
+                       COUNT(*) FILTER (WHERE status='declined')::int AS declined,
+                       COUNT(*) FILTER (WHERE activated_at IS NOT NULL)::int AS activated
+                  FROM subscription_checkout_orders`),
+    ]);
+    return res.json({ success: true, data: items.rows, counts: counts.rows[0], pagination: { page, limit, total: total.rows[0].total } });
+  } catch (error) {
+    console.error(`[subscriptionCheckout] [${req.id || '-'}] listAdmin:`, error.message);
+    return res.status(500).json({ success: false, message: 'No pudimos cargar las órdenes.' });
+  }
+};
+
+exports.activate = async (req, res) => {
+  const orderId = Number(req.params.id);
+  const adminId = Number(req.body?.admin_id);
+  if (!Number.isSafeInteger(orderId) || !Number.isSafeInteger(adminId)) {
+    return res.status(400).json({ success: false, message: 'Orden o administrador inválido.' });
+  }
+  try {
+    const admin = await db.query(
+      `SELECT u.id FROM users u
+       JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
+       WHERE u.id=$1 AND u.is_active=true AND r.name='admin' LIMIT 1`,
+      [adminId]
+    );
+    if (!admin.rowCount) return res.status(404).json({ success: false, message: 'Administrador activo no encontrado.' });
+
+    const claim = await db.query(
+      `UPDATE subscription_checkout_orders
+          SET activated_admin_id=$1, activation_started_at=now(), activated_by=$2
+        WHERE id=$3 AND status='approved' AND activated_at IS NULL
+          AND (activation_started_at IS NULL OR activation_started_at < now() - interval '15 minutes')
+        RETURNING *`,
+      [adminId, req.user.id, orderId]
+    );
+    if (!claim.rowCount) {
+      return res.status(409).json({ success: false, message: 'La orden no está aprobada, ya fue activada o está siendo procesada.' });
+    }
+    const order = claim.rows[0];
+    try {
+      await subscriptionService.activateSubscription(adminId, {
+        planSlug: order.plan_slug,
+        billingCycle: order.billing_cycle,
+        paymentMethod: 'wompi',
+        paymentReference: order.reference,
+        amountOverride: Number(order.amount_cents) / 100,
+        changedBy: req.user.id,
+      });
+      const { rows } = await db.query(
+        `UPDATE subscription_checkout_orders SET activated_at=now() WHERE id=$1 RETURNING *`,
+        [orderId]
+      );
+      return res.json({ success: true, message: 'Suscripción activada correctamente.', data: rows[0] });
+    } catch (activationError) {
+      await db.query(
+        `UPDATE subscription_checkout_orders
+            SET activated_admin_id=NULL, activation_started_at=NULL, activated_by=NULL
+          WHERE id=$1 AND activated_at IS NULL`,
+        [orderId]
+      );
+      throw activationError;
+    }
+  } catch (error) {
+    console.error(`[subscriptionCheckout] [${req.id || '-'}] activate:`, error.message);
+    return res.status(500).json({ success: false, message: 'No pudimos activar la suscripción.' });
   }
 };
 

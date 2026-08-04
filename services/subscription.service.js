@@ -189,6 +189,7 @@ const createTrialSubscription = async (adminId, planSlug, createdBy) => {
 const activateSubscription = async (adminId, {
   planSlug, billingCycle = "monthly",
   paymentMethod = "manual", paymentReference,
+  amountOverride,
   changedBy,
 }) => {
   const { rows: plans } = await db.query(
@@ -200,9 +201,12 @@ const activateSubscription = async (adminId, {
 
   const today     = new Date().toISOString().split("T")[0];
   const periodEnd = billingCycle === "yearly" ? addYears(today, 1) : addMonths(today, 1);
-  const amount    = billingCycle === "yearly"
+  const calculatedAmount = billingCycle === "yearly"
     ? (plan.price_yearly ?? plan.price_monthly * 12)
     : plan.price_monthly;
+  const amount = Number.isFinite(Number(amountOverride)) && Number(amountOverride) > 0
+    ? Number(amountOverride)
+    : calculatedAmount;
 
   const { rows } = await db.query(
     `INSERT INTO subscriptions
