@@ -135,6 +135,7 @@ const reviewsRoutes       = safeRequire("./routes/reviews.routes",          "rev
 const chatRoutes          = safeRequire("./routes/chat.routes",             "chat.routes");
 const wompiRoutes              = safeRequire("./routes/wompi.routes",            "wompi.routes");
 const paymentAccountsRoutes    = safeRequire("./routes/paymentAccounts.routes",  "paymentAccounts.routes");
+const fiscalIntegrationsRoutes = safeRequire("./routes/fiscalIntegrations.routes", "fiscalIntegrations.routes");
 const analyticsRoutes          = safeRequire("./routes/analytics.routes",        "analytics.routes");
 const contactRoutes       = safeRequire("./routes/contact.routes",          "contact.routes");
 const leadsRoutes         = safeRequire("./routes/leads.routes",            "leads.routes");
@@ -186,6 +187,7 @@ if (rolesRoutes)         app.use("/api/roles",          rolesRoutes);
 if (apiKeysRoutes)       app.use("/api/api-keys",       apiKeysRoutes);
 if (adminProfileRoutes)  app.use("/api/admin-profile",  adminProfileRoutes);
 if (subscriptionRoutes)  app.use("/api/subscriptions",  subscriptionRoutes); // ← nuevo
+if (fiscalIntegrationsRoutes) app.use("/api/fiscal-integrations", fiscalIntegrationsRoutes);
 
 // — Resto del panel —
 if (statsRoutes)         app.use("/api/stats",         statsRoutes);

@@ -70,6 +70,48 @@ exports.getMyInvoices = async (req, res) => {
   }
 };
 
+/** GET /api/subscriptions/me/invoices/:id/pdf */
+exports.downloadMyInvoicePdf = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const invoiceId = Number(req.params.id);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+      return res.status(400).json({ success: false, message: "Factura inválida" });
+    }
+
+    const { rows } = await db.query(
+      `SELECT si.*, sp.name AS plan_name,
+              u.name, u.email, u.phone, u.cedula,
+              ap.business_name, ap.tax_id
+         FROM subscription_invoices si
+         JOIN subscription_plans sp ON sp.id = si.plan_id
+         JOIN users u ON u.id = si.admin_id
+         LEFT JOIN admin_profiles ap ON ap.user_id = si.admin_id
+        WHERE si.id = $1 AND si.admin_id = $2
+        LIMIT 1`,
+      [invoiceId, adminId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Factura no encontrada" });
+    }
+
+    const { generateDelasoftInvoicePdf } = require("../services/delasoftInvoice.service");
+    const record = rows[0];
+    const pdf = await generateDelasoftInvoicePdf({ invoice: record, customer: record });
+    const filename = `DELASOFT-${record.invoice_number.replace(/[^A-Za-z0-9_-]/g, "-")}.pdf`;
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Length": pdf.length,
+      "Cache-Control": "private, no-store",
+    });
+    return res.send(pdf);
+  } catch (err) {
+    console.error("[downloadMyInvoicePdf]", err.message);
+    return res.status(500).json({ success: false, message: "No se pudo generar la factura" });
+  }
+};
+
 // ──────────────────────────────────────────
 // VALIDAR CUPÓN
 // ──────────────────────────────────────────

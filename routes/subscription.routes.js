@@ -17,6 +17,7 @@ router.get("/plans", ctrl.getPublicPlans);
 // Incluye sub-usuarios: el controller resuelve owner_admin_id || id
 router.get("/me",               auth, ctrl.getMySubscription);
 router.get("/me/invoices",      auth, ctrl.getMyInvoices);
+router.get("/me/invoices/:id/pdf", auth, ctrl.downloadMyInvoicePdf);
 router.post("/coupons/validate", auth, ctrl.validateCoupon);
 
 // ── Solo el admin raíz puede gestionar su propia suscripción ──

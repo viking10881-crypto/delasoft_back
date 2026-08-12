@@ -69,7 +69,6 @@ async function generateInvoicePdf(params) {
   const bizEmail   = branding?.businessEmail || process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || '';
   const bizPhone   = branding?.businessPhone || '';
   const bizAddress = branding?.address       || '';
-  const primaryHex = branding?.primaryColor  || '#0f172a';
   const logoUrl    = branding?.logoUrl       || null;
 
   // Descarga el logo ANTES de empezar a dibujar (PDFKit dibuja de forma síncrona)
@@ -83,16 +82,9 @@ async function generateInvoicePdf(params) {
     }
   }
 
-  // Convierte hex → RGB (0-1) para PDFKit
-  const hexToRgb = (hex) => {
-    const h = (hex || '#0f172a').replace('#', '');
-    return [
-      parseInt(h.slice(0, 2), 16) / 255,
-      parseInt(h.slice(2, 4), 16) / 255,
-      parseInt(h.slice(4, 6), 16) / 255,
-    ];
-  };
-  const [pr, pg, pb] = hexToRgb(primaryHex);
+  const DELASOFT_BLUE = '#183f91';
+  const DELASOFT_LINE = '#1671ec';
+  const LIGHT_BLUE = '#eaf1ff';
 
   const fmt = (n) => `$${Number(n ?? 0).toLocaleString('es-CO', { maximumFractionDigits: 0 })}`;
   const now = new Date();
@@ -109,94 +101,94 @@ async function generateInvoicePdf(params) {
   };
 
   return new Promise((resolve, reject) => {
-    const doc  = new PDFDocument({ margin: 50, size: 'A4' });
+    const doc  = new PDFDocument({ margin: 58, size: 'LETTER' });
     const chunks = [];
     doc.on('data',  (c) => chunks.push(c));
     doc.on('end',   ()  => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
     const W = doc.page.width;   // 595
-    const M = 50;               // margin
+    const M = 58;               // margin
     const CW = W - M * 2;       // content width = 495
 
     // ══════════════════════════════════════════════════════
-    // HEADER — barra de color + logo (si existe) + nombre del negocio
+    // HEADER corporativo DELASOFT — identidad propia de cada tienda
     // ══════════════════════════════════════════════════════
-    doc.rect(0, 0, W, 90).fill([pr, pg, pb]);
-
     let textX = M;
     if (logoBuffer) {
       try {
-        doc.image(logoBuffer, M, 18, { fit: [54, 54] });
-        textX = M + 68; // desplaza el texto a la derecha del logo
+        doc.image(logoBuffer, M, 38, { fit: [130, 120], align: 'left', valign: 'center' });
+        textX = M + 150;
       } catch (e) {
         console.error('[Invoice PDF] Logo en formato no soportado, se omite:', e.message);
         textX = M;
       }
     }
-    const textW = CW - 120 - (textX - M);
+    const textW = CW - (textX - M);
 
-    doc.fillColor('white')
-       .fontSize(20).font('Helvetica-Bold')
-       .text(bizName.toUpperCase(), textX, 22, { width: textW, align: 'left' });
+    doc.fillColor('#303a49').fontSize(19).font('Helvetica-Bold')
+       .text(bizName.toUpperCase(), textX, logoBuffer ? 70 : 55, { width: textW, align: 'left' });
 
-    doc.fontSize(9).font('Helvetica')
-       .text('FACTURA / RECIBO DE COMPRA', textX, 50, { width: textW });
+    doc.fillColor('#596579').fontSize(9).font('Helvetica')
+       .text(branding?.tagline || 'Comprobante comercial', textX, logoBuffer ? 96 : 81, { width: textW });
+
+    doc.rect(M, 175, CW, 4).fill(DELASOFT_LINE);
+    doc.fillColor(DELASOFT_BLUE).fontSize(22).font('Helvetica-Bold')
+       .text('FACTURA / RECIBO DE COMPRA', M, 194, { width: 355 });
 
     // Badge estado de pago
     const badgeLabel = statusLabels[paymentStatus] || paymentStatus?.toUpperCase() || 'EMITIDA';
-    const badgeColor = paymentStatus === 'paid' ? '#16a34a'
-                     : paymentStatus === 'pending' ? '#dc2626'
-                     : '#d97706';
-    const [br2, bg2, bb2] = hexToRgb(badgeColor);
-    doc.roundedRect(W - M - 110, 20, 110, 30, 6).fill([br2, bg2, bb2]);
+    // Mantiene la paleta visual DELASOFT en todos los comprobantes. El texto
+    // comunica el estado sin introducir una identidad cromática diferente.
+    const badgeColor = DELASOFT_BLUE;
+    doc.roundedRect(W - M - 100, 192, 100, 25, 5).fill(badgeColor);
     doc.fillColor('white').fontSize(10).font('Helvetica-Bold')
-       .text(badgeLabel, W - M - 110, 30, { width: 110, align: 'center' });
+       .text(badgeLabel, W - M - 100, 200, { width: 100, align: 'center' });
 
     // ── Datos del documento (derecha del header) ──
-    doc.fillColor('white').fontSize(8).font('Helvetica')
-       .text(`Pedido: ${orderCode}`, W - M - 110, 58, { width: 110, align: 'center' })
-       .text(dateStr, W - M - 110, 70, { width: 110, align: 'center' });
+    doc.fillColor('#596579').fontSize(8).font('Helvetica')
+       .text(`Pedido: ${orderCode}`, W - M - 130, 224, { width: 130, align: 'right' })
+       .text(dateStr, W - M - 130, 237, { width: 130, align: 'right' });
 
     // ══════════════════════════════════════════════════════
     // SECCIÓN: DATOS DEL NEGOCIO  |  DATOS DEL CLIENTE
     // ══════════════════════════════════════════════════════
-    let y = 110;
+    let y = 264;
     const colW = CW / 2 - 10;
 
     // Fondo gris claro para la sección
-    doc.rect(M, y, CW, 80).fill('#f8fafc');
-    doc.rect(M, y, CW, 80).stroke('#e2e8f0');
+    doc.rect(M, y, CW, 88).fillAndStroke('#ffffff', '#c8d8f6');
+    doc.rect(M, y, CW, 23).fill(LIGHT_BLUE);
 
     // Negocio (izquierda)
     doc.fillColor('#94a3b8').fontSize(7).font('Helvetica-Bold')
-       .text('EMISOR', M + 12, y + 10);
+       .text('EMISOR', M + 12, y + 8);
     doc.fillColor('#0f172a').fontSize(10).font('Helvetica-Bold')
-       .text(bizName, M + 12, y + 22);
+       .text(bizName, M + 12, y + 32);
     doc.fontSize(8).font('Helvetica').fillColor('#475569');
-    if (bizEmail)   doc.text(bizEmail,   M + 12, y + 36);
-    if (bizPhone)   doc.text(bizPhone,   M + 12, y + 48);
-    if (bizAddress) doc.text(bizAddress, M + 12, y + 60, { width: colW - 10 });
+    if (bizEmail)   doc.text(bizEmail,   M + 12, y + 47);
+    if (bizPhone)   doc.text(bizPhone,   M + 12, y + 59);
+    if (bizAddress) doc.text(bizAddress, M + 12, y + 71, { width: colW - 10 });
 
     // Cliente (derecha)
     const col2X = M + colW + 20;
     doc.fillColor('#94a3b8').fontSize(7).font('Helvetica-Bold')
-       .text('CLIENTE', col2X, y + 10);
+       .text('CLIENTE', col2X, y + 8);
     doc.fillColor('#0f172a').fontSize(10).font('Helvetica-Bold')
-       .text(customer?.name || 'Cliente', col2X, y + 22, { width: colW });
+       .text(customer?.name || 'Cliente', col2X, y + 32, { width: colW });
     doc.fontSize(8).font('Helvetica').fillColor('#475569')
-       .text(customer?.email || '', col2X, y + 36, { width: colW });
+       .text(customer?.email || '', col2X, y + 47, { width: colW });
     if (shippingCity || shippingAddress) {
-      doc.text(`${shippingCity || ''} — ${shippingAddress || ''}`, col2X, y + 48, { width: colW });
+      doc.text(`${shippingCity || ''} — ${shippingAddress || ''}`, col2X, y + 61, { width: colW });
     }
 
     // ══════════════════════════════════════════════════════
     // TABLA DE ÍTEMS
     // ══════════════════════════════════════════════════════
-    y += 96;
+    y += 106;
 
     // Encabezado tabla
-    doc.rect(M, y, CW, 22).fill([pr, pg, pb]);
+    doc.rect(M, y, CW, 25).fill(DELASOFT_BLUE);
     doc.fillColor('white').fontSize(8).font('Helvetica-Bold');
     doc.text('PRODUCTO',        M + 8,       y + 7, { width: 200 });
     doc.text('SKU',             M + 212,     y + 7, { width: 70 });
@@ -204,7 +196,7 @@ async function generateInvoicePdf(params) {
     doc.text('P. UNIT.',        M + 338,     y + 7, { width: 70, align: 'right' });
     doc.text('SUBTOTAL',        M + 412,     y + 7, { width: 75, align: 'right' });
 
-    y += 22;
+    y += 25;
 
     // Filas
     items.forEach((item, i) => {
@@ -236,7 +228,7 @@ async function generateInvoicePdf(params) {
 
     const drawTotalRow = (label, value, bold = false, highlight = false) => {
       if (highlight) {
-        doc.rect(totalsX - 8, y - 4, totalsW + 8, 24).fill([pr, pg, pb]);
+        doc.rect(totalsX - 8, y - 4, totalsW + 8, 24).fill(DELASOFT_BLUE);
         doc.fillColor('white');
       } else {
         doc.fillColor(bold ? '#0f172a' : '#64748b');
@@ -257,30 +249,33 @@ async function generateInvoicePdf(params) {
     // PAGO
     // ══════════════════════════════════════════════════════
     y += 16;
-    doc.rect(M, y, CW, 36).fill('#f0fdf4').stroke('#bbf7d0');
-    doc.fillColor('#059669').fontSize(8).font('Helvetica-Bold')
+    doc.rect(M, y, CW, 42).fillAndStroke(LIGHT_BLUE, '#c8d8f6');
+    doc.fillColor(DELASOFT_BLUE).fontSize(8).font('Helvetica-Bold')
        .text('MÉTODO DE PAGO', M + 12, y + 8);
-    doc.fillColor('#065f46').fontSize(10).font('Helvetica-Bold')
+    doc.fillColor(DELASOFT_BLUE).fontSize(10).font('Helvetica-Bold')
        .text(payLabels[paymentMethod] || paymentMethod || 'Por confirmar', M + 12, y + 20);
 
-    doc.fillColor('#059669').fontSize(8).font('Helvetica-Bold')
+    doc.fillColor(DELASOFT_BLUE).fontSize(8).font('Helvetica-Bold')
        .text('ESTADO', M + CW - 130, y + 8, { width: 118, align: 'right' });
-    doc.fillColor('#065f46').fontSize(10).font('Helvetica-Bold')
+    doc.fillColor(DELASOFT_BLUE).fontSize(10).font('Helvetica-Bold')
        .text(statusLabels[paymentStatus] || paymentStatus || '—', M + CW - 130, y + 20, { width: 118, align: 'right' });
 
     // ══════════════════════════════════════════════════════
     // FOOTER
     // ══════════════════════════════════════════════════════
     const footerY = doc.page.height - 60;
-    doc.rect(0, footerY, W, 60).fill('#0f172a');
-    doc.fillColor('#94a3b8').fontSize(8).font('Helvetica')
+    // El pie se dibuja dentro del margen inferior. `lineBreak: false` evita que
+    // PDFKit cree páginas extra al actualizar internamente la posición Y.
+    doc.page.margins.bottom = 0;
+    doc.moveTo(M, footerY).lineTo(W - M, footerY).stroke('#b9cef5');
+    doc.fillColor('#596579').fontSize(8).font('Helvetica')
        .text(
          `© ${now.getFullYear()} ${bizName} · Gestionado con Delasoft ERP · ${bizEmail}`,
-         M, footerY + 18, { width: CW, align: 'center' }
+         M, footerY + 18, { width: CW, align: 'center', lineBreak: false }
        )
        .text(
          `Documento generado el ${dateStr} · Ref: ${saleNumber}`,
-         M, footerY + 34, { width: CW, align: 'center' }
+         M, footerY + 34, { width: CW, align: 'center', lineBreak: false }
        );
 
     doc.end();
