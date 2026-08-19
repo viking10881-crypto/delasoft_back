@@ -34,10 +34,10 @@
   resolved "https://registry.npmjs.org/@eslint/js/-/js-8.57.1.tgz"
   integrity sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==
 
-"@getbrevo/brevo@^3.0.1":
-  version "3.0.1"
-  resolved "https://registry.npmjs.org/@getbrevo/brevo/-/brevo-3.0.1.tgz"
-  integrity sha512-BS5hlgb9qPHhXqjV+VbEOciygnsEVZV8BgoX+JYpD+I+R9u3U05y/euqdmk8nATfcEUCUlQq+aWdWOWTF4cEjQ==
+"@getbrevo/brevo@^3.0.4":
+  version "3.0.4"
+  resolved "https://registry.npmjs.org/@getbrevo/brevo/-/brevo-3.0.4.tgz"
+  integrity sha512-MtsqqsB9MjMEDYKP3QBHGRJmYbUBHCYH2RxA4DHeB8sbm0TEraoaiOfng0kBebPplR9WSvf6jXw+ri10bGP/aA==
   dependencies:
     axios "^1.6.8"
     bluebird "^3.5.0"
