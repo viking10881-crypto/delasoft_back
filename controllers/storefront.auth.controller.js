@@ -344,6 +344,7 @@ exports.login = async (req, res) => {
     // Búsqueda SIEMPRE scopeada al tenant — nunca solo por email
     const userRes = await client.query(
       `SELECT id, email, password, name, phone, cedula, city, address,
+              profile_image_url AS avatar_url,
               failed_login_attempts, locked_until, is_active, is_verified
        FROM users
        WHERE email = $1 AND owner_admin_id = $2`,
@@ -462,6 +463,7 @@ exports.login = async (req, res) => {
         cedula:         user.cedula,
         city:           user.city,
         address:        user.address,
+        avatar_url:     user.avatar_url,
         roles,
         owner_admin_id: ownerAdminId,
       },
