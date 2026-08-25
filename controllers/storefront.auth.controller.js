@@ -605,7 +605,9 @@ exports.getProfile = async (req, res) => {
     const userId = req.user.id;
 
     const userRes = await db.query(
-      `SELECT id, email, name, phone, cedula, city, address, created_at, last_login
+      `SELECT id, email, name, phone, cedula, city, address,
+              profile_image_url AS avatar_url,
+              created_at, last_login
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -637,7 +639,7 @@ exports.updateProfile = async (req, res) => {
   const client = await db.connect();
   try {
     const userId = req.user.id;
-    const { name, phone, city, address } = req.body;
+    const { name, phone, city, address, avatar_url, avatar_public_id } = req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({ success: false, message: "El nombre es requerido", code: "MISSING_FIELDS" });
@@ -645,13 +647,26 @@ exports.updateProfile = async (req, res) => {
 
     await client.query(
       `UPDATE users
-       SET name = $1, phone = $2, city = $3, address = $4, updated_at = NOW()
-       WHERE id = $5`,
-      [name.trim(), phone?.trim() || null, city?.trim() || null, address?.trim() || null, userId]
+       SET name = $1, phone = $2, city = $3, address = $4,
+           profile_image_url = COALESCE($5, profile_image_url),
+           profile_image_public_id = COALESCE($6, profile_image_public_id),
+           updated_at = NOW()
+       WHERE id = $7`,
+      [
+        name.trim(),
+        phone?.trim() || null,
+        city?.trim() || null,
+        address?.trim() || null,
+        avatar_url?.trim() || null,
+        avatar_public_id?.trim() || null,
+        userId,
+      ]
     );
 
     const updated = await client.query(
-      "SELECT id, email, name, phone, cedula, city, address FROM users WHERE id = $1",
+      `SELECT id, email, name, phone, cedula, city, address,
+              profile_image_url AS avatar_url
+       FROM users WHERE id = $1`,
       [userId]
     );
 
