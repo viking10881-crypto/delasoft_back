@@ -53,6 +53,76 @@ const gatewayConfig = async () => {
   };
 };
 
+// Crea la orden en subscription_checkout_orders y devuelve los parámetros del
+// Web Checkout de Wompi. El monto siempre sale del plan en BD.
+async function createCheckoutOrder({ plan, billingCycle, buyerName, businessName, email, phone, adminId = null, redirectUrl }) {
+  const config = await gatewayConfig();
+  if (!config.publicKey || !config.integritySecret || !config.eventsSecret) {
+    const err = new Error('Los pagos estarán disponibles cuando finalicemos la configuración de Wompi.');
+    err.status = 503;
+    err.code = 'PAYMENT_GATEWAY_NOT_CONFIGURED';
+    throw err;
+  }
+
+  const amountPesos = Number(billingCycle === 'yearly' ? plan.price_yearly : plan.price_monthly);
+  if (!Number.isSafeInteger(amountPesos) || amountPesos <= 0) throw new Error('Precio de plan inválido');
+  const amountCents = amountPesos * 100;
+  const currency = plan.currency || 'COP';
+  const reference = `DS-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+  const signature = sha256(`${reference}${amountCents}${currency}${config.integritySecret}`);
+
+  // activated_admin_id: cuando la compra sale del panel ya sabemos a qué
+  // administrador pertenece, así el webhook puede activar el plan solo.
+  await db.query(
+    `INSERT INTO subscription_checkout_orders (
+       reference, plan_id, plan_slug, plan_name, billing_cycle,
+       buyer_name, business_name, email, phone, currency, amount_cents,
+       consent_accepted, activated_admin_id
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,$12)`,
+    [reference, plan.id, plan.slug, plan.name, billingCycle, buyerName,
+      businessName, email, phone, currency, amountCents, adminId]
+  );
+
+  return {
+    url: 'https://checkout.wompi.co/p/',
+    public_key: config.publicKey,
+    currency,
+    amount_in_cents: amountCents,
+    reference,
+    signature_integrity: signature,
+    redirect_url: (redirectUrl || `${config.landingUrl}/?payment=return`) + `&reference=${encodeURIComponent(reference)}`,
+  };
+}
+
+// Activa la suscripción de una orden ya "reclamada" (activation_started_at
+// puesto). Si falla, libera el reclamo para poder reintentar.
+async function runActivation(order, adminId, changedBy, { releaseAdmin }) {
+  try {
+    await subscriptionService.activateSubscription(adminId, {
+      planSlug: order.plan_slug,
+      billingCycle: order.billing_cycle,
+      paymentMethod: 'wompi',
+      paymentReference: order.reference,
+      amountOverride: Number(order.amount_cents) / 100,
+      changedBy,
+    });
+    const { rows } = await db.query(
+      `UPDATE subscription_checkout_orders SET activated_at=now() WHERE id=$1 RETURNING *`,
+      [order.id]
+    );
+    return rows[0];
+  } catch (activationError) {
+    await db.query(
+      `UPDATE subscription_checkout_orders
+          SET activation_started_at=NULL, activated_by=NULL
+              ${releaseAdmin ? ', activated_admin_id=NULL' : ''}
+        WHERE id=$1 AND activated_at IS NULL`,
+      [order.id]
+    );
+    throw activationError;
+  }
+}
+
 exports.create = async (req, res) => {
   try {
     if (req.body?.website) return res.status(201).json({ success: true });
@@ -90,47 +160,65 @@ exports.create = async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'El plan seleccionado no está disponible.' });
 
-    const config = await gatewayConfig();
-    if (!config.publicKey || !config.integritySecret || !config.eventsSecret) {
-      return res.status(503).json({
-        success: false,
-        message: 'Los pagos estarán disponibles cuando finalicemos la configuración de Wompi.',
-        code: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
-      });
+    const checkout = await createCheckoutOrder({
+      plan: rows[0], billingCycle, buyerName, businessName, email, phone,
+    });
+    return res.status(201).json({ success: true, checkout });
+  } catch (error) {
+    if (error.status === 503) return res.status(503).json({ success: false, message: error.message, code: error.code });
+    console.error(`[subscriptionCheckout] [${req.id || '-'}] create:`, error.message);
+    return res.status(500).json({ success: false, message: 'No pudimos iniciar el pago. Intenta nuevamente.' });
+  }
+};
+
+// POST /api/subscriptions/checkout — el administrador ya registrado paga su
+// plan desde el panel. Al aprobarse, el webhook activa la suscripción.
+exports.createForAdmin = async (req, res) => {
+  try {
+    const adminId = req.user.owner_admin_id || req.user.id;
+    const planSlug = cleanText(req.body?.plan_slug, 30);
+    const billingCycle = cleanText(req.body?.billing_cycle, 10);
+    if (!['monthly', 'yearly'].includes(billingCycle)) {
+      return res.status(400).json({ success: false, message: 'El ciclo de cobro no es válido.' });
     }
 
-    const plan = rows[0];
-    const amountPesos = Number(billingCycle === 'yearly' ? plan.price_yearly : plan.price_monthly);
-    if (!Number.isSafeInteger(amountPesos) || amountPesos <= 0) throw new Error('Precio de plan inválido');
-    const amountCents = amountPesos * 100;
-    const currency = plan.currency || 'COP';
-    const reference = `DS-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
-    const signature = sha256(`${reference}${amountCents}${currency}${config.integritySecret}`);
-
-    await db.query(
-      `INSERT INTO subscription_checkout_orders (
-         reference, plan_id, plan_slug, plan_name, billing_cycle,
-         buyer_name, business_name, email, phone, currency, amount_cents,
-         consent_accepted
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE)`,
-      [reference, plan.id, plan.slug, plan.name, billingCycle, buyerName,
-        businessName, email, phone, currency, amountCents]
+    const { rows: plans } = await db.query(
+      `SELECT id, name, slug, price_monthly, price_yearly, currency
+         FROM subscription_plans
+        WHERE slug = $1 AND is_active = true
+        LIMIT 1`,
+      [planSlug]
     );
+    if (!plans.length) return res.status(404).json({ success: false, message: 'El plan seleccionado no está disponible.' });
 
-    return res.status(201).json({
-      success: true,
-      checkout: {
-        url: 'https://checkout.wompi.co/p/',
-        public_key: config.publicKey,
-        currency,
-        amount_in_cents: amountCents,
-        reference,
-        signature_integrity: signature,
-        redirect_url: `${config.landingUrl}/?payment=return&reference=${encodeURIComponent(reference)}`,
-      },
+    const { rows: users } = await db.query(
+      `SELECT u.name, u.email, u.phone, ap.business_name, ap.business_phone
+         FROM users u
+         LEFT JOIN admin_profiles ap ON ap.user_id = u.id
+        WHERE u.id = $1`,
+      [adminId]
+    );
+    const buyer = users[0];
+    const email = normalizeEmail(buyer?.email);
+    if (!buyer || !email || !isValidEmail(email)) {
+      return res.status(400).json({ success: false, message: 'Agrega un correo válido a tu cuenta antes de pagar.' });
+    }
+
+    const adminUrl = (process.env.ADMIN_URL || process.env.FRONTEND_URL || 'https://delasoftfront.vercel.app').replace(/\/$/, '');
+    const checkout = await createCheckoutOrder({
+      plan: plans[0],
+      billingCycle,
+      buyerName: cleanText(buyer.name, 120) || email,
+      businessName: cleanText(buyer.business_name, 160),
+      email: email.slice(0, 160),
+      phone: cleanText(buyer.business_phone || buyer.phone, 40),
+      adminId,
+      redirectUrl: `${adminUrl}/subscription?payment=return`,
     });
+    return res.status(201).json({ success: true, checkout });
   } catch (error) {
-    console.error(`[subscriptionCheckout] [${req.id || '-'}] create:`, error.message);
+    if (error.status === 503) return res.status(503).json({ success: false, message: error.message, code: error.code });
+    console.error(`[subscriptionCheckout] [${req.id || '-'}] createForAdmin:`, error.message);
     return res.status(500).json({ success: false, message: 'No pudimos iniciar el pago. Intenta nuevamente.' });
   }
 };
@@ -230,30 +318,8 @@ exports.activate = async (req, res) => {
     if (!claim.rowCount) {
       return res.status(409).json({ success: false, message: 'La orden no está aprobada, ya fue activada o está siendo procesada.' });
     }
-    const order = claim.rows[0];
-    try {
-      await subscriptionService.activateSubscription(adminId, {
-        planSlug: order.plan_slug,
-        billingCycle: order.billing_cycle,
-        paymentMethod: 'wompi',
-        paymentReference: order.reference,
-        amountOverride: Number(order.amount_cents) / 100,
-        changedBy: req.user.id,
-      });
-      const { rows } = await db.query(
-        `UPDATE subscription_checkout_orders SET activated_at=now() WHERE id=$1 RETURNING *`,
-        [orderId]
-      );
-      return res.json({ success: true, message: 'Suscripción activada correctamente.', data: rows[0] });
-    } catch (activationError) {
-      await db.query(
-        `UPDATE subscription_checkout_orders
-            SET activated_admin_id=NULL, activation_started_at=NULL, activated_by=NULL
-          WHERE id=$1 AND activated_at IS NULL`,
-        [orderId]
-      );
-      throw activationError;
-    }
+    const activated = await runActivation(claim.rows[0], adminId, req.user.id, { releaseAdmin: true });
+    return res.json({ success: true, message: 'Suscripción activada correctamente.', data: activated });
   } catch (error) {
     console.error(`[subscriptionCheckout] [${req.id || '-'}] activate:`, error.message);
     return res.status(500).json({ success: false, message: 'No pudimos activar la suscripción.' });
@@ -302,6 +368,29 @@ exports.webhook = async (req, res) => {
     );
 
     if (!result.rowCount) console.warn(`[subscriptionCheckout] Evento sin orden coincidente: ${transaction.reference}`);
+
+    // Órdenes creadas desde el panel ya traen el administrador: se activan solas.
+    // Las de la landing (sin administrador) siguen esperando en Contrataciones.
+    if (result.rowCount && status === 'approved') {
+      const claim = await db.query(
+        `UPDATE subscription_checkout_orders
+            SET activation_started_at=now(), activated_by=activated_admin_id
+          WHERE id=$1 AND status='approved' AND activated_at IS NULL
+            AND activated_admin_id IS NOT NULL
+            AND (activation_started_at IS NULL OR activation_started_at < now() - interval '15 minutes')
+          RETURNING *`,
+        [result.rows[0].id]
+      );
+      if (claim.rowCount) {
+        const order = claim.rows[0];
+        try {
+          await runActivation(order, Number(order.activated_admin_id), Number(order.activated_admin_id), { releaseAdmin: false });
+        } catch (activationError) {
+          // El pago queda aprobado; el superadmin puede activarlo desde Contrataciones.
+          console.error(`[subscriptionCheckout] Activación automática fallida ${order.reference}:`, activationError.message);
+        }
+      }
+    }
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error(`[subscriptionCheckout] [${req.id || '-'}] webhook:`, error.message);

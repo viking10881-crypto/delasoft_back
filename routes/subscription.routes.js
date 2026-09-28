@@ -24,6 +24,8 @@ router.post("/coupons/validate", auth, ctrl.validateCoupon);
 router.post("/cancel",       auth, requireAdmin, ctrl.cancelSubscription);
 router.post("/reactivate",   auth, requireAdmin, ctrl.reactivateSubscription);
 router.post("/change-plan",  auth, requireAdmin, ctrl.changePlan);
+// Planes de pago: genera la orden de Wompi; el webhook activa el plan al aprobarse.
+router.post("/checkout",     auth, requireAdmin, checkoutCtrl.createForAdmin);
 
 // ── Solo superadmin ────────────────────────────────────────────
 router.get  ("/admin/all",        auth, requireSuperAdmin, ctrl.getAllSubscriptions);

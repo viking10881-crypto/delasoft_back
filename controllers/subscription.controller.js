@@ -242,6 +242,16 @@ exports.changePlan = async (req, res) => {
     const adminId = req.user.owner_admin_id || req.user.id;
     const { plan_slug } = req.body;
     if (!plan_slug) return res.status(400).json({ success: false, message: "plan_slug requerido" });
+    // Solo se cambia sin pago a planes gratuitos; los de pago pasan por /checkout.
+    if (!req.user.roles?.includes("superadmin")) {
+      const { rows } = await db.query(
+        "SELECT price_monthly FROM subscription_plans WHERE slug = $1 AND is_active = true",
+        [plan_slug]
+      );
+      if (rows.length && Number(rows[0].price_monthly) > 0) {
+        return res.status(402).json({ success: false, message: "Este plan requiere pago.", code: "PAYMENT_REQUIRED" });
+      }
+    }
     const result = await subscriptionService.changePlan(adminId, plan_slug, req.user.id);
     res.json({ success: true, message: "Plan actualizado", subscription: result });
   } catch (err) {
