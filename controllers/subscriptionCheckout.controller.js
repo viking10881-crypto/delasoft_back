@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('../config/db');
 const subscriptionService = require('../services/subscription.service');
 const { isValidEmail, normalizeEmail } = require('../utils/validation');
+const { decrypt } = require('../utils/crypto');
 
 const cleanText = (value, maxLength) => {
   if (typeof value !== 'string') return null;
@@ -22,12 +23,35 @@ const safeEqual = (left, right) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 
-const gatewayConfig = () => ({
-  publicKey: process.env.WOMPI_SUBSCRIPTIONS_PUBLIC_KEY,
-  integritySecret: process.env.WOMPI_SUBSCRIPTIONS_INTEGRITY_SECRET,
-  eventsSecret: process.env.WOMPI_SUBSCRIPTIONS_EVENTS_SECRET,
-  landingUrl: (process.env.LANDING_URL || 'http://localhost:5173').replace(/\/$/, ''),
-});
+// Las llaves de cobro de planes salen de la cuenta Wompi que el superadmin
+// registra (y verifica) en Configuración → Pagos. Las variables
+// WOMPI_SUBSCRIPTIONS_* quedan solo como respaldo.
+const gatewayConfig = async () => {
+  const landingUrl = (process.env.LANDING_URL || 'http://localhost:5173').replace(/\/$/, '');
+  const { rows } = await db.query(
+    `SELECT spa.public_key, spa.integrity_secret_encrypted, spa.events_secret_encrypted
+       FROM store_payment_accounts spa
+       JOIN user_roles ur ON ur.user_id = spa.admin_id
+       JOIN roles r ON r.id = ur.role_id AND r.name = 'superadmin'
+      WHERE spa.provider = 'wompi' AND spa.is_active = true AND spa.status = 'connected'
+      ORDER BY spa.updated_at DESC
+      LIMIT 1`
+  );
+  if (rows.length) {
+    return {
+      publicKey: rows[0].public_key,
+      integritySecret: decrypt(rows[0].integrity_secret_encrypted),
+      eventsSecret: decrypt(rows[0].events_secret_encrypted),
+      landingUrl,
+    };
+  }
+  return {
+    publicKey: process.env.WOMPI_SUBSCRIPTIONS_PUBLIC_KEY,
+    integritySecret: process.env.WOMPI_SUBSCRIPTIONS_INTEGRITY_SECRET,
+    eventsSecret: process.env.WOMPI_SUBSCRIPTIONS_EVENTS_SECRET,
+    landingUrl,
+  };
+};
 
 exports.create = async (req, res) => {
   try {
@@ -66,7 +90,7 @@ exports.create = async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'El plan seleccionado no está disponible.' });
 
-    const config = gatewayConfig();
+    const config = await gatewayConfig();
     if (!config.publicKey || !config.integritySecret || !config.eventsSecret) {
       return res.status(503).json({
         success: false,
@@ -241,7 +265,7 @@ exports.webhook = async (req, res) => {
     const event = req.body;
     const properties = event?.signature?.properties;
     const receivedChecksum = req.get('X-Event-Checksum') || event?.signature?.checksum;
-    const eventsSecret = gatewayConfig().eventsSecret;
+    const eventsSecret = (await gatewayConfig()).eventsSecret;
 
     if (!eventsSecret || !Array.isArray(properties) || !properties.length || !event?.data || !event?.timestamp || !receivedChecksum) {
       return res.status(400).json({ success: false, message: 'Evento inválido.' });

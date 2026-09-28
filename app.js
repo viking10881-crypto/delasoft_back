@@ -30,7 +30,10 @@ const configuredOrigins = (process.env.ALLOWED_ORIGINS || "")
 const developmentOrigins = isProd
   ? []
   : ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"];
-const allowedOrigins = new Set([...configuredOrigins, ...developmentOrigins]);
+// La landing (LANDING_URL) llama a /api/public/subscription-checkouts para cobrar los planes.
+const landingOrigins = [];
+try { if (process.env.LANDING_URL) landingOrigins.push(new URL(process.env.LANDING_URL).origin); } catch { /* URL inválida */ }
+const allowedOrigins = new Set([...configuredOrigins, ...developmentOrigins, ...landingOrigins]);
 
 const CORS_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
