@@ -586,6 +586,107 @@ const sendCreditReminderEmail = async (email, customerName, data, type, branding
 };
 
 // ============================================
+// 📬 RECORDATORIOS DE SUSCRIPCIÓN DELASOFT (al admin dueño de la cuenta)
+// ============================================
+// type: 'trial_ending' | 'renewal_reminder' | 'past_due' | 'grace_ending'
+// data: { planName?, daysLeft?, amount?, dueDate?, graceExpiresAt? }
+const sendSubscriptionReminderEmail = async (email, adminName, type, data = {}) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
+  const { planName, daysLeft, amount, dueDate, graceExpiresAt } = data;
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('es-CO', {
+    day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Bogota',
+  }) : '';
+  const fmtAmt = (n) => n != null ? Number(n).toLocaleString('es-CO', { maximumFractionDigits: 0 }) : null;
+  const days   = (n) => `${n} día${n !== 1 ? 's' : ''}`;
+
+  const badges = {
+    trial_ending:     '⏳  TU PRUEBA ESTÁ POR VENCER',
+    renewal_reminder: '🔔  RECORDATORIO DE RENOVACIÓN',
+    past_due:         '⚠️  PAGO PENDIENTE',
+    grace_ending:     '🔴  ÚLTIMO AVISO ANTES DE SUSPENDER',
+  };
+
+  const headlines = {
+    trial_ending:     `¡Hola, ${adminName}! 👋`,
+    renewal_reminder: `${adminName}, tu plan se renueva pronto`,
+    past_due:         `${adminName}, no pudimos procesar tu pago`,
+    grace_ending:     `${adminName}, tu cuenta está a punto de suspenderse`,
+  };
+
+  const bodyTexts = {
+    trial_ending:     `Tu período de prueba del plan <strong>${planName ?? ''}</strong> vence en <strong>${days(daysLeft)}</strong>. Activa tu suscripción para no perder acceso a tu panel.`,
+    renewal_reminder: `Tu plan <strong>${planName ?? ''}</strong> se renovará automáticamente el <strong>${fmtDate(dueDate)}</strong> por <strong>$${fmtAmt(amount)}</strong>. No necesitas hacer nada si todo está en orden.`,
+    past_due:         `No pudimos procesar el pago de tu plan <strong>${planName ?? ''}</strong>${amount != null ? ` ($${fmtAmt(amount)}/mes)` : ''}. Tienes hasta el <strong>${fmtDate(graceExpiresAt)}</strong> para regularizar tu pago antes de que se suspenda el servicio.`,
+    grace_ending:     `Quedan <strong>${days(daysLeft)}</strong> para que tu cuenta se suspenda por falta de pago. Regulariza tu suscripción para conservar el acceso a tu panel y tus datos.`,
+  };
+
+  const accentCfg = {
+    trial_ending:     { color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe', primary: '#0f172a', secondary: '#1e293b' },
+    renewal_reminder: { color: '#3b82f6', bg: '#eff6ff', border: '#bfdbfe', primary: '#0f172a', secondary: '#1e293b' },
+    past_due:         { color: '#d97706', bg: '#fffbeb', border: '#fde68a', primary: '#78350f', secondary: '#92400e' },
+    grace_ending:     { color: '#dc2626', bg: '#fef2f2', border: '#fecaca', primary: '#7f1d1d', secondary: '#991b1b' },
+  };
+  const acc = accentCfg[type] ?? accentCfg.trial_ending;
+
+  const htmlBody = `
+    <p style="font-size:22px;color:#0f172a;font-weight:800;margin:0 0 16px;">${headlines[type] ?? headlines.trial_ending}</p>
+    <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 28px;">${bodyTexts[type] ?? bodyTexts.trial_ending}</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:${acc.bg};border:1px solid ${acc.border};border-radius:14px;margin-bottom:28px;">
+      <tr><td style="padding:20px 24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-size:11px;font-weight:700;color:${acc.color};letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;">Plan</div>
+            <div style="font-size:15px;font-weight:800;color:#0f172a;">${planName ?? '—'}</div>
+          </div>
+          ${amount != null ? `
+          <div>
+            <div style="font-size:11px;font-weight:700;color:${acc.color};letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;">Monto</div>
+            <div style="font-size:22px;font-weight:900;color:#0f172a;">$${fmtAmt(amount)}</div>
+          </div>` : ''}
+        </div>
+      </td></tr>
+    </table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">
+      <tr><td style="text-align:center;">
+        <a href="${process.env.FRONTEND_URL || 'https://delasoftfront.vercel.app'}/subscription"
+           style="display:inline-block;background:${acc.color};color:#ffffff;font-size:14px;font-weight:800;padding:14px 32px;border-radius:12px;text-decoration:none;">
+          Ver mi suscripción
+        </a>
+      </td></tr>
+    </table>
+  `;
+
+  const subjects = {
+    trial_ending:     `⏳ Tu prueba vence en ${days(daysLeft)} - Delasoft`,
+    renewal_reminder: `🔔 Tu plan se renueva el ${fmtDate(dueDate)} - Delasoft`,
+    past_due:         `⚠️ No pudimos procesar tu pago - Delasoft`,
+    grace_ending:     `🔴 Últimos ${days(daysLeft)} antes de suspender tu cuenta - Delasoft`,
+  };
+
+  const effectiveBranding = { ...DELASOFT_BRANDING, primaryColor: acc.primary, secondaryColor: acc.secondary };
+
+  const sendSmtpEmail = new SendSmtpEmail();
+  sendSmtpEmail.subject     = subjects[type] ?? subjects.trial_ending;
+  sendSmtpEmail.to          = [{ email, name: adminName || 'Administrador' }];
+  sendSmtpEmail.sender      = SENDER;
+  sendSmtpEmail.htmlContent = buildBrandedEmail({
+    branding: effectiveBranding,
+    badge:    badges[type] ?? badges.trial_ending,
+    body:     htmlBody,
+  });
+
+  try {
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`[Email] Recordatorio de suscripción (${type}) enviado — messageId:`, body?.messageId ?? '(sin id)');
+    return true;
+  } catch (err) {
+    console.error(`[Email] Error enviando recordatorio de suscripción (${type}):`, err?.message ?? err);
+    return false;
+  }
+};
+
+// ============================================
 // 📄 FACTURA PDF ADJUNTA AL EMAIL DE CONFIRMACIÓN
 // Pega esta función al final de config/emailConfig.js
 // (antes del module.exports) y agrégala al exports
@@ -777,4 +878,5 @@ module.exports = {
   sendPaymentConfirmedEmail,
   sendAgentReportEmail,
   sendCreditReminderEmail,
+  sendSubscriptionReminderEmail,
 };

@@ -2,11 +2,7 @@
 const cron = require("node-cron");
 const subscriptionService = require("./subscription.service");
 const db = require("../config/db");
-
-// ─────────────────────────────────────────────────────────────────
-// OPCIONAL: importa tu módulo de email cuando esté listo
-// const { sendEmail } = require('./email.service');
-// ─────────────────────────────────────────────────────────────────
+const { sendSubscriptionReminderEmail } = require("../config/emailConfig");
 
 function startSubscriptionCron() {
 
@@ -83,7 +79,14 @@ async function notifyTrialExpiring() {
     console.log(
       `[SubscriptionCron] ⚠ Trial por vencer: ${row.email} | Plan: ${row.plan_name} | ${row.days_left}d`
     );
-    // await sendEmail({ to: row.email, subject: `Tu prueba vence en ${row.days_left} día(s)`, ... });
+    try {
+      await sendSubscriptionReminderEmail(row.email, row.name, "trial_ending", {
+        planName: row.plan_name,
+        daysLeft: row.days_left,
+      });
+    } catch (err) {
+      console.error(`[SubscriptionCron] Error enviando email a ${row.email}:`, err.message);
+    }
   }
 }
 
@@ -92,9 +95,11 @@ async function notifyGraceExpiring() {
   const { rows } = await db.query(`
     SELECT
       s.admin_id, u.email, u.name, s.grace_expires_at,
-      EXTRACT(DAY FROM s.grace_expires_at - now())::int AS days_left
+      EXTRACT(DAY FROM s.grace_expires_at - now())::int AS days_left,
+      sp.name AS plan_name
     FROM subscriptions s
-    JOIN users u ON u.id = s.admin_id
+    JOIN users u            ON u.id   = s.admin_id
+    JOIN subscription_plans sp ON sp.id = s.plan_id
     WHERE s.status = 'past_due'
       AND s.grace_expires_at IS NOT NULL
       AND s.grace_expires_at > now()
@@ -103,7 +108,14 @@ async function notifyGraceExpiring() {
 
   for (const row of rows) {
     console.log(`[SubscriptionCron] 🔴 Gracia por expirar: ${row.email} | ${row.days_left}d`);
-    // await sendEmail({ ... });
+    try {
+      await sendSubscriptionReminderEmail(row.email, row.name, "grace_ending", {
+        planName: row.plan_name,
+        daysLeft: row.days_left,
+      });
+    } catch (err) {
+      console.error(`[SubscriptionCron] Error enviando email a ${row.email}:`, err.message);
+    }
   }
 }
 
@@ -122,7 +134,15 @@ async function notifyPastDue() {
 
   for (const row of rows) {
     console.log(`[SubscriptionCron] 💸 Pago pendiente (primer día): ${row.email}`);
-    // await sendEmail({ ... });
+    try {
+      await sendSubscriptionReminderEmail(row.email, row.name, "past_due", {
+        planName:       row.plan_name,
+        amount:         row.price_monthly,
+        graceExpiresAt: row.grace_expires_at,
+      });
+    } catch (err) {
+      console.error(`[SubscriptionCron] Error enviando email a ${row.email}:`, err.message);
+    }
   }
 }
 
@@ -145,7 +165,15 @@ async function notifyRenewalReminder() {
     console.log(
       `[SubscriptionCron] 🔔 Recordatorio renovación: ${row.email} | ${row.plan_name} | vence ${row.current_period_end}`
     );
-    // await sendEmail({ ... });
+    try {
+      await sendSubscriptionReminderEmail(row.email, row.name, "renewal_reminder", {
+        planName: row.plan_name,
+        amount:   row.amount_due,
+        dueDate:  row.current_period_end,
+      });
+    } catch (err) {
+      console.error(`[SubscriptionCron] Error enviando email a ${row.email}:`, err.message);
+    }
   }
 }
 
