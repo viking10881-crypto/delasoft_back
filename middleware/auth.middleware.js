@@ -142,6 +142,29 @@ const apiKeyAuth = async (req, res, next) => {
       return res.status(403).json({ success: false, message: "Cuenta admin desactivada", code: "ADMIN_INACTIVE" });
     }
 
+    // La clave hereda el plan del dueño: si la suscripción no está vigente o el plan
+    // no incluye api_access, la clave deja de funcionar (aunque siga activa).
+    const { rows: [access] } = await db.query(
+      `SELECT s.status, sp.has_api_access,
+              EXISTS (
+                SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                 WHERE ur.user_id = u.id AND r.name = 'superadmin'
+              ) AS is_superadmin
+         FROM users u
+         LEFT JOIN subscriptions s       ON s.admin_id = u.id
+         LEFT JOIN subscription_plans sp ON sp.id = s.plan_id
+        WHERE u.id = $1`,
+      [key.admin_id]
+    );
+    const VIGENTES = ["trial", "active", "past_due"];
+    if (!access?.is_superadmin && (!VIGENTES.includes(access?.status) || access?.has_api_access !== true)) {
+      return res.status(403).json({
+        success: false,
+        message: "Tu plan no incluye API o la suscripción no está vigente",
+        code: "API_PLAN_NOT_ALLOWED",
+      });
+    }
+
     const origin  = req.headers.origin || req.headers.referer || "";
     const origins = key.allowed_origins || [];
 
