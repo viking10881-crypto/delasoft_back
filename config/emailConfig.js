@@ -687,6 +687,66 @@ const sendSubscriptionReminderEmail = async (email, adminName, type, data = {}) 
 };
 
 // ============================================
+// 📦 RESUMEN DIARIO DE STOCK BAJO (al dueño del negocio)
+// ============================================
+// items: [{ name, sku, stock_fisico, disponible, min_stock }]
+const sendLowStockDigestEmail = async (email, ownerName, items) => {
+  const { apiInstance, SendSmtpEmail } = getBrevoClient();
+  const fmtN = (n) => Number(n ?? 0).toLocaleString('es-CO', { maximumFractionDigits: 0 });
+
+  const rows = items.map(it => {
+    const agotado = Number(it.disponible) <= 0;
+    return `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:700;color:#0f172a;font-size:14px;">${it.name}</div>
+        ${it.sku ? `<div style="font-size:11px;color:#94a3b8;margin-top:3px;">SKU: ${it.sku}</div>` : ''}
+      </td>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:center;font-weight:800;color:${agotado ? '#dc2626' : '#d97706'};font-size:14px;">${fmtN(it.disponible)}</td>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:center;color:#64748b;font-size:14px;">${fmtN(it.min_stock)}</td>
+      <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:right;">
+        <span style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:50px;background:${agotado ? '#fef2f2' : '#fffbeb'};color:${agotado ? '#991b1b' : '#92400e'};">${agotado ? 'AGOTADO' : 'BAJO MÍNIMO'}</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const htmlBody = `
+    <p style="font-size:22px;color:#0f172a;font-weight:800;margin:0 0 12px;">${ownerName}, tienes ${items.length} producto${items.length !== 1 ? 's' : ''} con stock bajo</p>
+    <p style="font-size:15px;color:#64748b;line-height:1.75;margin:0 0 24px;">
+      Estos productos están en o por debajo de su stock mínimo. Revisa tu inventario para reabastecerlos a tiempo.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:24px;">
+      <thead><tr style="background:#f8fafc;">
+        <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Producto</th>
+        <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Disponible</th>
+        <th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Mínimo</th>
+        <th style="padding:10px 16px;text-align:right;font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;">Estado</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+
+  const sendSmtpEmail = new SendSmtpEmail();
+  sendSmtpEmail.subject     = `📦 ${items.length} producto${items.length !== 1 ? 's' : ''} con stock bajo - Delasoft`;
+  sendSmtpEmail.to          = [{ email, name: ownerName || 'Administrador' }];
+  sendSmtpEmail.sender      = SENDER;
+  sendSmtpEmail.htmlContent = buildBrandedEmail({
+    branding: DELASOFT_BRANDING,
+    badge:    '📦  RESUMEN DE STOCK BAJO',
+    body:     htmlBody,
+  });
+
+  try {
+    const { body } = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('[Email] Resumen de stock bajo enviado — messageId:', body?.messageId ?? '(sin id)');
+    return true;
+  } catch (err) {
+    console.error('[Email] Error enviando resumen de stock bajo:', err?.message ?? err);
+    return false;
+  }
+};
+
+// ============================================
 // 📄 FACTURA PDF ADJUNTA AL EMAIL DE CONFIRMACIÓN
 // Pega esta función al final de config/emailConfig.js
 // (antes del module.exports) y agrégala al exports
@@ -879,4 +939,5 @@ module.exports = {
   sendAgentReportEmail,
   sendCreditReminderEmail,
   sendSubscriptionReminderEmail,
+  sendLowStockDigestEmail,
 };

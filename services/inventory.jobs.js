@@ -5,6 +5,7 @@
 const cron = require('node-cron');
 const db   = require('../config/db');
 const inv  = require('./inventory.service');
+const { sendLowStockDigestEmail } = require('../config/emailConfig');
 
 // ─── Job 1: liberar reservas vencidas ────────────────────────────────────────
 const CLEANUP_BATCH       = 100;
@@ -118,10 +119,64 @@ function startLowStockAlertJob() {
   });
 }
 
+// ─── Job 3: resumen diario de stock bajo por correo (09:00) ──────────────────
+// Solo productos con mínimo configurado (min_stock > 0) y disponible <= mínimo.
+// Se calcula desde el stock actual, no desde stock_alerts.
+function startLowStockDigestJob() {
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const { rows } = await db.query(`
+        SELECT v.owner_admin_id, u.email, u.name,
+               v.name, v.sku, v.variant_sku, v.stock_fisico,
+               v.disponible_inmediato AS disponible, v.min_stock
+          FROM v_stock_disponible v
+          JOIN users u ON u.id = v.owner_admin_id
+         WHERE u.is_active = true
+           AND COALESCE(v.min_stock, 0) > 0
+           AND v.disponible_inmediato <= v.min_stock
+         ORDER BY v.owner_admin_id, v.name
+      `);
+
+      const byOwner = new Map();
+      for (const r of rows) {
+        if (!byOwner.has(r.owner_admin_id)) {
+          byOwner.set(r.owner_admin_id, { email: r.email, name: r.name, items: [] });
+        }
+        byOwner.get(r.owner_admin_id).items.push({
+          name: r.name,
+          sku: r.variant_sku || r.sku,
+          stock_fisico: r.stock_fisico,
+          disponible: r.disponible,
+          min_stock: r.min_stock,
+        });
+      }
+
+      for (const [adminId, owner] of byOwner) {
+        try {
+          await sendLowStockDigestEmail(owner.email, owner.name, owner.items);
+        } catch (err) {
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(), event: 'low_stock_digest_error',
+            adminId, error: err.message,
+          }));
+        }
+      }
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), event: 'low_stock_digest_done', owners: byOwner.size,
+      }));
+    } catch (err) {
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), event: 'low_stock_digest_job_error', error: err.message,
+      }));
+    }
+  });
+}
+
 function startInventoryJobs() {
   startReservationCleanupJob();
   // startLowStockAlertJob(); — disabled: all products are hybrid, no static alerts needed
-  console.log('[inventory-jobs] reservation-cleanup (1min) iniciado');
+  startLowStockDigestJob();
+  console.log('[inventory-jobs] reservation-cleanup (1min) + low-stock digest (09:00) iniciados');
 }
 
 module.exports = { startInventoryJobs };
